@@ -120,9 +120,14 @@ module FakeSMTPd
         @smtpd.start
         loop { sleep 1 }
       rescue Exception => e
-        $stderr.puts '--- Shutting down ---'
-        @httpd && @httpd.kill!
-        @smtpd && @smtpd.kill!
+        if @httpd
+          $stderr.puts '--- Shutting down HTTP server ---'
+          @httpd.kill!
+        end
+        if @smtpd
+          $stderr.puts '--- Shutting down SMTP server ---'
+          @smtpd.kill!
+        end
         unless e.is_a?(Interrupt)
           raise e
         end

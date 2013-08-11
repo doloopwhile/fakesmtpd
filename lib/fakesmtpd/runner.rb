@@ -5,7 +5,7 @@ require 'logger'
 
 class FakeSMTPd::Runner
   attr_reader :port, :dir, :pidfile, :http_port
-  attr_reader :startup_sleep, :server_pid, :options
+  attr_reader :startup_sleep, :server_pid, :options, :logfile
 
   def initialize(options = {})
     @dir = options.fetch(:dir)
@@ -13,6 +13,7 @@ class FakeSMTPd::Runner
     @http_port = Integer(options[:http_port] || port + 1)
     @pidfile = options[:pidfile] || 'fakesmtpd.pid'
     @startup_sleep = options[:startup_sleep] || 0.5
+    @logfile = options[:logfile] || $stderr
   end
 
   def description
@@ -20,13 +21,15 @@ class FakeSMTPd::Runner
   end
 
   def command
-    [
-      RbConfig.ruby,
-      File.expand_path('../server.rb', __FILE__),
-      port.to_s,
-      dir,
-      pidfile,
-    ].join(' ')
+    (
+      [
+        RbConfig.ruby,
+        File.expand_path('../server.rb', __FILE__),
+        port.to_s,
+        dir,
+        '--pidfile', pidfile,
+      ] + (logfile == $stderr ? [] : ['--logfile', logfile])
+    ).join(' ')
   end
 
   def start
@@ -54,9 +57,9 @@ class FakeSMTPd::Runner
   end
 
   def log
-    @log ||= Logger.new($stderr).tap do |l|
+    @log ||= Logger.new(@logfile).tap do |l|
       l.formatter = proc do |severity, datetime, _, msg|
-        "[fakesmtpd] #{severity} #{datetime} - #{msg}\n"
+        "[fakesmtpd-runner] #{severity} #{datetime} - #{msg}\n"
       end
     end
   end

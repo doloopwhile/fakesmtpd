@@ -8,11 +8,15 @@ require 'fakesmtpd'
 describe 'fakesmtpd server' do
   RUNNER = FakeSMTPd::Runner.new(
     dir: File.expand_path('../../.artifacts', __FILE__),
-    port: rand(9100..9199)
+    port: rand(9100..9199),
+    logfile: File.expand_path('../../.artifacts/fakesmtpd.log', __FILE__),
+    pidfile: File.expand_path('../../.artifacts/fakesmtpd.pid', __FILE__),
   )
   RUNNER.start
 
-  at_exit { RUNNER.stop }
+  at_exit do
+    RUNNER.stop
+  end
 
   def randint
     @randint ||= rand(999..1999)

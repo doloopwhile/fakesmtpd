@@ -27,10 +27,11 @@
 
 require 'json'
 require 'logger'
+require 'optparse'
 require 'socket'
 require 'thread'
 
-$fakesmtpd_semaphore = Mutex.new
+$fakesmtpd_mutex = Mutex.new
 
 module FakeSMTPd
   class HTTPServer
@@ -39,7 +40,7 @@ module FakeSMTPd
     def initialize(options = {})
       @port = options.fetch(:port)
       @smtpd = options.fetch(:smtpd)
-      @log = Logger.new($stderr).tap do |l|
+      @log = Logger.new(options[:logfile]).tap do |l|
         l.formatter = proc do |severity, datetime, _, msg|
           "[fakesmtpd-http] #{severity} #{datetime} - #{msg}\n"
         end
@@ -59,13 +60,13 @@ module FakeSMTPd
             client.puts 'HTTP/1.1 200 OK'
             client.puts 'Content-type: application/json;charset=utf-8'
             client.puts
-            $fakesmtpd_semaphore.synchronize do
+            $fakesmtpd_mutex.synchronize do
               client.puts JSON.pretty_generate(
                 message_files: smtpd.message_files_written
               )
             end
           elsif request_line =~ /^DELETE \/messages /
-            $fakesmtpd_semaphore.synchronize do
+            $fakesmtpd_mutex.synchronize do
             smtpd.message_files_written.clear
           end
           client.puts 'HTTP/1.1 204 No Content'
@@ -82,50 +83,77 @@ module FakeSMTPd
     end
 
     def kill!
-      @server && @server.kill
+      if @server
+        log.info "FakeSMTPd HTTP server stopping"
+        @server.kill
+      end
     end
   end
 
   class Server
     VERSION = '0.1.1'
-    USAGE = "Usage: #{File.basename($0)} <port> <message-dir> [pidfile]"
+    USAGE = <<-EOU.gsub(/^ {6}/, '')
+      Usage: #{File.basename($0)} <smtp-port> <message-dir> [options]
 
-    attr_reader :port, :message_dir, :log, :pidfile, :message_files_written
+      The `<smtp-port>` argument will be incremented by 1 for the HTTP API port.
+      The `<message-dir>` is where each SMTP transaction will be written as a
+      JSON file containing the "smtp client id" (timestamp from beginning of SMTP
+      transaction), the sender, recipients, and combined headers and body as
+      an array of strings.
+
+    EOU
+
+    attr_reader :port, :message_dir, :log, :logfile, :pidfile
+    attr_reader :message_files_written
 
     class << self
-      def main(argv = [].freeze)
-        if argv.include?('-h') || argv.include?('--help')
-          puts USAGE
-          exit 0
-        end
-        if argv.include?('--version')
-          puts FakeSMTPd::Server::VERSION
-          exit 0
-        end
-        unless argv.length > 1
+      def main(argv = [])
+        options = {
+          pidfile: nil,
+          logfile: $stderr,
+        }
+
+        OptionParser.new do |opts|
+          opts.banner = USAGE
+          opts.on('--version', 'Show version and exit') do |*|
+            puts "fakesmtpd #{FakeSMTPd::Server::VERSION}"
+            exit 0
+          end
+          opts.on('-p PIDFILE', '--pidfile PIDFILE',
+                  'Optional file where process PID will be written') do |pidfile|
+            options[:pidfile] = pidfile
+          end
+          opts.on('-l LOGFILE', '--logfile LOGFILE',
+                  'Optional file where all log messages will be written ' <<
+                  '(default $stderr)') do |logfile|
+            options[:logfile] = logfile
+          end
+        end.parse!(argv)
+
+        unless argv.length == 2
           abort USAGE
         end
+
         @smtpd = FakeSMTPd::Server.new(
           port: Integer(argv.fetch(0)),
           dir: argv.fetch(1),
-          pidfile: argv[2]
+          pidfile: options[:pidfile],
+          logfile: options[:logfile],
         )
         @httpd = FakeSMTPd::HTTPServer.new(
           port: Integer(argv.fetch(0)) + 1,
           smtpd: @smtpd,
+          logfile: options[:logfile],
         )
 
-        $stderr.puts '--- Starting up ---'
         @httpd.start
         @smtpd.start
         loop { sleep 1 }
       rescue Exception => e
         if @httpd
-          $stderr.puts '--- Shutting down HTTP server ---'
           @httpd.kill!
         end
         if @smtpd
-          $stderr.puts '--- Shutting down SMTP server ---'
           @smtpd.kill!
         end
         unless e.is_a?(Interrupt)
@@ -138,7 +166,7 @@ module FakeSMTPd
       @port = options.fetch(:port)
       @message_dir = options.fetch(:dir)
       @pidfile = options[:pidfile] || 'fakesmtpd.pid'
-      @log = Logger.new($stderr).tap do |l|
+      @log = Logger.new(options[:logfile]).tap do |l|
         l.formatter = proc do |severity, datetime, _, msg|
           "[fakesmtpd-smtp] #{severity} #{datetime} - #{msg}\n"
         end
@@ -165,7 +193,10 @@ module FakeSMTPd
     end
 
     def kill!
-      @server && @server.kill
+      if @server
+        log.info "FakeSMTPd SMTP server stopping"
+        @server.kill
+      end
     end
 
     def serve(client)
@@ -240,7 +271,7 @@ module FakeSMTPd
           body: body,
         )
       end
-      $fakesmtpd_semaphore.synchronize do
+      $fakesmtpd_mutex.synchronize do
         message_files_written << outfile
       end
       outfile

@@ -87,7 +87,7 @@ module FakeSMTPd
   end
 
   class Server
-    VERSION = '0.1.0'
+    VERSION = '0.1.1'
     USAGE = "Usage: #{File.basename($0)} <port> <message-dir> [pidfile]"
 
     attr_reader :port, :message_dir, :log, :pidfile, :message_files_written

@@ -1,6 +1,8 @@
 `fakesmtpd`
 ===========
 
+[![Build Status](https://travis-ci.org/modcloth-labs/fakesmtpd.png?branch=master)](https://travis-ci.org/modcloth-labs/fakesmtpd)
+
 A fake SMTP server with a minimal HTTP API.
 Inspired by [mailtrap](https://github.com/mmower/mailtrap).
 

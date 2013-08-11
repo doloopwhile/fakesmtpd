@@ -56,7 +56,8 @@ module FakeSMTPd
           client = httpd.accept
           request_line = client.gets
           log.info request_line.chomp
-          if request_line =~ /^GET \/messages /
+          case request_line
+          when /^GET \/messages /
             client.puts 'HTTP/1.1 200 OK'
             client.puts 'Content-type: application/json;charset=utf-8'
             client.puts
@@ -65,17 +66,36 @@ module FakeSMTPd
                 message_files: smtpd.message_files_written
               )
             end
-          elsif request_line =~ /^DELETE \/messages /
+          when /^GET \/messages\/([[:digit:]]+) /
+            message_id = $1
+            message_file = nil
             $fakesmtpd_mutex.synchronize do
-            smtpd.message_files_written.clear
-          end
-          client.puts 'HTTP/1.1 204 No Content'
-          client.puts
+              message_file = smtpd.message_files_written[message_id]
+            end
+            if message_file
+              client.puts 'HTTP/1.1 200 OK'
+              client.puts 'Content-type: application/json;charset=utf-8'
+              client.puts
+              client.puts File.read(message_file)
+            else
+              client.puts 'HTTP/1.1 404 Not Found'
+              client.puts 'Content-type: application/json;charset=utf-8'
+              client.puts
+              client.puts JSON.pretty_generate(
+                error: "Message #{message_id.inspect} not found"
+              )
+            end
+          when /^DELETE \/messages /
+            $fakesmtpd_mutex.synchronize do
+              smtpd.message_files_written.clear
+            end
+            client.puts 'HTTP/1.1 204 No Content'
+            client.puts
           else
-            client.puts 'HTTP/1.1 405 Method Not Allowed'
+            client.puts 'HTTP/1.1 404 Not Found'
             client.puts 'Content-type: text/plain;charset=utf-8'
             client.puts
-            client.puts 'Only "(GET|DELETE) /messages" is supported, eh.'
+            client.puts 'Only "(GET|DELETE) /messages/?([[:digit]])" supported, eh.'
           end
           client.close
         end
@@ -171,7 +191,7 @@ module FakeSMTPd
           "[fakesmtpd-smtp] #{severity} #{datetime} - #{msg}\n"
         end
       end
-      @message_files_written = []
+      @message_files_written = {}
     end
 
     def start
@@ -272,7 +292,7 @@ module FakeSMTPd
         )
       end
       $fakesmtpd_mutex.synchronize do
-        message_files_written << outfile
+        message_files_written[client.client_id] = outfile
       end
       outfile
     end

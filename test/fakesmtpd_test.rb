@@ -18,6 +18,8 @@ describe 'fakesmtpd server' do
     RUNNER.stop
   end
 
+  after(:each) { clear_messages }
+
   def randint
     @randint ||= rand(999..1999)
   end
@@ -44,17 +46,45 @@ describe 'fakesmtpd server' do
     end
   end
 
+  def get_messages
+    uri = URI("http://localhost:#{RUNNER.http_port}/messages")
+    JSON.parse(Net::HTTP.get_response(uri).body)
+  end
+
+  def clear_messages
+    Net::HTTP.start('localhost', RUNNER.http_port) do |http|
+      http.request(Net::HTTP::Delete.new('/messages'))
+    end
+  end
+
+  def get_message(message_id)
+    uri = URI("http://localhost:#{RUNNER.http_port}/messages/#{message_id}")
+    JSON.parse(Net::HTTP.get_response(uri).body)
+  end
+
   it 'accepts messages via SMTP' do
     send_message
   end
 
-  it 'reports messages sent via HTTP' do
-    send_message
+  it 'supports clearing sent messages via HTTP' do
+    clear_messages
+  end
 
-    uri = URI("http://localhost:#{RUNNER.http_port}/messages")
-    response = JSON.parse(Net::HTTP.get_response(uri).body)
-    message_file = response.fetch('message_files').last
+  it 'supports getting messages sent via HTTP' do
+    send_message
+    response = get_messages
+
+    message_file = response.fetch('message_files').values.last
     message_body = JSON.parse(File.read(message_file)).fetch('body')
+    message_body.must_include("Subject: #{subject_header}")
+  end
+
+  it 'supports getting individual messages sent via HTTP' do
+    send_message
+    response = get_messages
+
+    message_id = response.fetch('message_files').keys.last
+    message_body = get_message(message_id).fetch('body')
     message_body.must_include("Subject: #{subject_header}")
   end
 end

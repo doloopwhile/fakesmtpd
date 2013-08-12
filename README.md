@@ -69,12 +69,12 @@ Ruby process.  The HTTP port is one more than the SMTP port specified.
 ### HTTP API Usage
 
 The HTTP API provides an index of all sent messages, the ability to
-fetch sent message content, and the ability to clear all sent messages
-all as JSON (or no content) via the following:
+fetch sent message content, and the ability to clear sent messages
+via the following:
 
 #### `GET /`
 
-Contains almost nothing but a link to `/messages`
+Contains almost nothing but a link to `/messages`.
 
 #### `GET /messages`
 

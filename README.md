@@ -61,3 +61,30 @@ fakesmtpd.start
 # This will kill the previously-spawned process
 fakesmtpd.stop
 ```
+
+Once `FakeSMTPd::Server.main` has been invoked via one of the above
+methods, there will be both an SMTP and HTTP server running in a single
+Ruby process.  The HTTP port is one more than the SMTP port specified.
+
+### HTTP API Usage
+
+The HTTP API provides an index of all sent messages, the ability to
+fetch sent message content, and the ability to clear all sent messages
+all as JSON (or no content) via the following:
+
+#### `GET /`
+
+Contains almost nothing but a link to `/messages`
+
+#### `GET /messages`
+
+Contains an index of all sent messages, their IDs, their absolute
+filenames, and links to the content for each.
+
+#### `GET /messages/[[:digit:]]`
+
+Returns the content of the message with the given ID.
+
+#### `DELETE /messages`
+
+Clears all files out of the sent messages directory.

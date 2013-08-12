@@ -25,13 +25,12 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+require 'fileutils'
 require 'json'
 require 'logger'
 require 'optparse'
 require 'socket'
 require 'thread'
-
-$fakesmtpd_mutex = Mutex.new
 
 module FakeSMTPd
   class HTTPServer
@@ -54,50 +53,13 @@ module FakeSMTPd
         log.info "PID=#{$$} Thread=#{Thread.current.inspect}"
         loop do
           client = httpd.accept
-          request_line = client.gets
-          log.info request_line.chomp
-          case request_line
-          when /^GET \/messages /
-            client.puts 'HTTP/1.1 200 OK'
-            client.puts 'Content-type: application/json;charset=utf-8'
-            client.puts
-            $fakesmtpd_mutex.synchronize do
-              client.puts JSON.pretty_generate(
-                message_files: smtpd.message_files_written
-              )
-            end
-          when /^GET \/messages\/([[:digit:]]+) /
-            message_id = $1
-            message_file = nil
-            $fakesmtpd_mutex.synchronize do
-              message_file = smtpd.message_files_written[message_id]
-            end
-            if message_file
-              client.puts 'HTTP/1.1 200 OK'
-              client.puts 'Content-type: application/json;charset=utf-8'
-              client.puts
-              client.puts File.read(message_file)
-            else
-              client.puts 'HTTP/1.1 404 Not Found'
-              client.puts 'Content-type: application/json;charset=utf-8'
-              client.puts
-              client.puts JSON.pretty_generate(
-                error: "Message #{message_id.inspect} not found"
-              )
-            end
-          when /^DELETE \/messages /
-            $fakesmtpd_mutex.synchronize do
-              smtpd.message_files_written.clear
-            end
-            client.puts 'HTTP/1.1 204 No Content'
-            client.puts
-          else
-            client.puts 'HTTP/1.1 404 Not Found'
-            client.puts 'Content-type: text/plain;charset=utf-8'
-            client.puts
-            client.puts 'Only "(GET|DELETE) /messages/?([[:digit]])" supported, eh.'
+          begin
+            request_line = client.gets
+            path = request_line.split[1]
+            handle_client(request_line, path, client)
+          rescue => e
+            handle_500(path, client, e)
           end
-          client.close
         end
       end
     end
@@ -108,10 +70,122 @@ module FakeSMTPd
         @server.kill
       end
     end
+
+    private
+
+    def handle_client(request_line, path, client)
+      log.info request_line.chomp
+      case request_line
+      when /^GET \/ /
+        handle_get_root(path, client)
+      when /^GET \/messages /
+        handle_get_messages(path, client)
+      when /^GET \/messages\/([[:digit:]]+) /
+        handle_get_message(path, client, $1)
+      when /^DELETE \/messages /
+        handle_clear_messages(path, client)
+      else
+        handle_404(path, client)
+      end
+      client.close
+    end
+
+    def handle_get_root(path, client)
+      client.puts 'HTTP/1.1 200 OK'
+      client.puts 'Content-type: application/json;charset=utf-8'
+      client.puts
+      client.puts JSON.pretty_generate(
+        _links: {
+          self: {href: path},
+          messages: {href: '/messages'},
+        }
+      )
+    end
+
+    def handle_get_messages(path, client)
+      client.puts 'HTTP/1.1 200 OK'
+      client.puts 'Content-type: application/json;charset=utf-8'
+      client.puts
+      client.puts JSON.pretty_generate(
+        _links: {
+          self: {href: path}
+        },
+        _embedded: {
+          messages: smtpd.messages.to_hash.map do |message_id, filename|
+            {
+              _links: {
+                self: {href: "/messages/#{message_id}"}
+              },
+              message_id: message_id,
+              filename: filename
+            }
+          end
+        }
+      )
+    end
+
+    def handle_get_message(path, client, message_id)
+      message_file = smtpd.messages[message_id]
+      if message_file
+        client.puts 'HTTP/1.1 200 OK'
+        client.puts 'Content-type: application/json;charset=utf-8'
+        client.puts
+        message = JSON.parse(File.read(message_file))
+        client.puts JSON.pretty_generate(
+          message.merge(
+            _links: {
+              self: {href: path}
+            },
+            filename: message_file
+          )
+        )
+      else
+        client.puts 'HTTP/1.1 404 Not Found'
+        client.puts 'Content-type: application/json;charset=utf-8'
+        client.puts
+        client.puts JSON.pretty_generate(
+          _links: {
+            self: {href: path}
+          },
+          error: "Message #{message_id.inspect} not found"
+        )
+      end
+    end
+
+    def handle_clear_messages(path, client)
+      smtpd.messages.clear
+      client.puts 'HTTP/1.1 204 No Content'
+      client.puts
+    end
+
+    def handle_404(path, client)
+      client.puts 'HTTP/1.1 404 Not Found'
+      client.puts 'Content-type: application/json;charset=utf-8'
+      client.puts
+      client.puts JSON.pretty_generate(
+        _links: {
+          self: {href: path}
+        },
+        error: 'Nothing is here'
+      )
+    end
+
+    def handle_500(path, client, e)
+      client.puts 'HTTP/1.1 500 Internal Server Error'
+      client.puts 'Content-type: application/json;charset=utf-8'
+      client.puts
+      client.puts JSON.pretty_generate(
+        _links: {
+          self: {href: path}
+        },
+        error: "#{e.class.name} #{e.message}",
+        backtrace: e.backtrace
+      )
+    end
   end
 
   class Server
-    VERSION = '0.1.1'
+    VERSION = '0.2.0'
     USAGE = <<-EOU.gsub(/^ {6}/, '')
       Usage: #{File.basename($0)} <smtp-port> <message-dir> [options]
 
@@ -124,7 +198,7 @@ module FakeSMTPd
     EOU
 
     attr_reader :port, :message_dir, :log, :logfile, :pidfile
-    attr_reader :message_files_written
+    attr_reader :messages
 
     class << self
       def main(argv = [])
@@ -191,7 +265,7 @@ module FakeSMTPd
           "[fakesmtpd-smtp] #{severity} #{datetime} - #{msg}\n"
         end
       end
-      @message_files_written = {}
+      @messages = MessageStore.new(@message_dir)
     end
 
     def start
@@ -282,19 +356,55 @@ module FakeSMTPd
     end
 
     def record(client, from, recipients, body)
-      outfile = File.join(message_dir, "fakesmtpd-client-#{client.client_id}.json")
+      messages.store(
+        client.client_id, from, recipients, body
+      )
+    end
+  end
+
+  class MessageStore
+    attr_reader :message_dir
+
+    def initialize(message_dir)
+      @message_dir = message_dir
+    end
+
+    def store(message_id, from, recipients, body)
+      outfile = File.join(message_dir, "fakesmtpd-client-#{message_id}.json")
       File.open(outfile, 'w') do |f|
         f.write JSON.pretty_generate(
-          client_id: client.client_id,
+          message_id: message_id,
           from: from,
           recipients: recipients,
           body: body,
         )
       end
-      $fakesmtpd_mutex.synchronize do
-        message_files_written[client.client_id] = outfile
-      end
       outfile
+    end
+
+    def to_hash
+      message_files.each_with_object({}) do |filename, h|
+        message_id = File.basename(filename, '.json').gsub(/[^0-9]+/, '')
+        h[message_id] = File.expand_path(filename)
+      end
+    end
+
+    def [](message_id)
+      message_file = "#{message_dir}/fakesmtpd-client-#{message_id}.json"
+      if File.exists?(message_file)
+        return message_file
+      end
+      nil
+    end
+
+    def clear
+      FileUtils.rm_f(message_files)
+    end
+
+    private
+
+    def message_files
+      Dir.glob("#{message_dir}/fakesmtpd-client-*.json")
     end
   end
 end

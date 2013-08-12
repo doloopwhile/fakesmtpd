@@ -42,7 +42,7 @@ describe 'fakesmtpd server' do
 
   def send_message
     Net::SMTP.start('localhost', RUNNER.port) do |smtp|
-      smtp.send_message msg, 'fakesmtpd@example.org', 'fruitcake@example.org'
+      smtp.send_message(msg, 'fakesmtpd@example.org', 'fruitcake@example.org')
     end
   end
 
@@ -74,7 +74,7 @@ describe 'fakesmtpd server' do
     send_message
     response = get_messages
 
-    message_file = response.fetch('message_files').values.last
+    message_file = response.fetch('_embedded').fetch('messages').last.fetch('filename')
     message_body = JSON.parse(File.read(message_file)).fetch('body')
     message_body.must_include("Subject: #{subject_header}")
   end
@@ -83,7 +83,7 @@ describe 'fakesmtpd server' do
     send_message
     response = get_messages
 
-    message_id = response.fetch('message_files').keys.last
+    message_id = response.fetch('_embedded').fetch('messages').last.fetch('message_id')
     message_body = get_message(message_id).fetch('body')
     message_body.must_include("Subject: #{subject_header}")
   end

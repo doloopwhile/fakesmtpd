@@ -26,6 +26,7 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 require 'fileutils'
+require 'gserver'
 require 'json'
 require 'logger'
 require 'optparse'
@@ -33,11 +34,13 @@ require 'socket'
 require 'thread'
 
 module FakeSMTPd
-  class HTTPServer
+  class HTTPServer < GServer
     attr_reader :server, :port, :smtpd, :log
 
     def initialize(options = {})
       @port = options.fetch(:port)
+      super(@port)
+
       @smtpd = options.fetch(:smtpd)
       @log = Logger.new(options[:logfile]).tap do |l|
         l.formatter = proc do |severity, datetime, _, msg|
@@ -46,29 +49,23 @@ module FakeSMTPd
       end
     end
 
-    def start
-      @server = Thread.new do
-        httpd = TCPServer.new(port)
-        log.info "FakeSMTPd HTTP server serving on #{port}"
-        log.info "PID=#{$$} Thread=#{Thread.current.inspect}"
-        loop do
-          client = httpd.accept
-          begin
-            request_line = client.gets
-            path = request_line.split[1]
-            handle_client(request_line, path, client)
-          rescue => e
-            handle_500(path, client, e)
-          end
-        end
-      end
+    def start(*args)
+      super(*args)
+      log.info "FakeSMTPd HTTP server serving on #{port}"
+      log.info "PID=#{$$} Thread=#{Thread.current.inspect}"
     end
 
-    def kill!
-      if @server
-        log.info "FakeSMTPd HTTP server stopping"
-        @server.kill
-      end
+    def stop(*args)
+      log.info "FakeSMTPd HTTP server stopping"
+      super(*args)
+    end
+
+    def serve(io)
+      request_line = io.gets
+      path = request_line.split[1]
+      handle_client(request_line, path, io)
+    rescue => e
+      handle_500(path, io, e)
     end
 
     private
@@ -87,7 +84,6 @@ module FakeSMTPd
       else
         handle_404(path, client)
       end
-      client.close
     end
 
     def handle_get_root(path, client)
@@ -184,7 +180,7 @@ module FakeSMTPd
     end
   end
 
-  class Server
+  class Server < GServer
     VERSION = '0.2.0'
     USAGE = <<-EOU.gsub(/^ {6}/, '')
       Usage: #{File.basename($0)} <smtp-port> <message-dir> [options]
@@ -242,13 +238,13 @@ module FakeSMTPd
 
         @httpd.start
         @smtpd.start
-        loop { sleep 1 }
+        @httpd.join && @smtpd.join
       rescue Exception => e
-        if @httpd
-          @httpd.kill!
+        if @httpd && !@httpd.stopped?
+          @httpd.stop
         end
-        if @smtpd
-          @smtpd.kill!
+        if @smtpd && !@smtpd.stopped?
+          @smtpd.stop
         end
         unless e.is_a?(Interrupt)
           raise e
@@ -258,6 +254,7 @@ module FakeSMTPd
 
     def initialize(options = {})
       @port = options.fetch(:port)
+      super(@port)
       @message_dir = options.fetch(:dir)
       @pidfile = options[:pidfile] || 'fakesmtpd.pid'
       @log = Logger.new(options[:logfile]).tap do |l|
@@ -268,29 +265,17 @@ module FakeSMTPd
       @messages = MessageStore.new(@message_dir)
     end
 
-    def start
-      @server = Thread.new do
-        smtpd = TCPServer.new(port)
-        log.info "FakeSMTPd SMTP server serving on #{port}, " <<
-        "writing messages to #{message_dir.inspect}"
-        log.info "PID=#{$$}, Thread=#{Thread.current.inspect}"
-        File.open(pidfile, 'w') { |f| f.puts($$) }
-
-        loop do
-          begin
-            serve(smtpd.accept)
-          rescue => e
-            log.error "WAT: #{e.class.name} #{e.message}"
-          end
-        end
-      end
+    def start(*args)
+      super(*args)
+      File.open(pidfile, 'w') { |f| f.puts($$) }
+      log.info "FakeSMTPd SMTP server serving on #{port}, " <<
+               "writing messages to #{message_dir.inspect}"
+      log.info "PID=#{$$} Thread=#{Thread.current.inspect}"
     end
 
-    def kill!
-      if @server
-        log.info "FakeSMTPd SMTP server stopping"
-        @server.kill
-      end
+    def stop(*args)
+      log.info "FakeSMTPd SMTP server stopping"
+      super(*args)
     end
 
     def serve(client)

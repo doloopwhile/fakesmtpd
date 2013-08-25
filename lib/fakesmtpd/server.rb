@@ -276,8 +276,8 @@ module FakeSMTPd
       if pidfile
         File.open(pidfile, 'w') { |f| f.puts($$) }
       end
-      log "FakeSMTPd SMTP server serving on #{port}, " <<
-               "writing messages to #{message_dir.inspect}"
+      log "FakeSMTPd SMTP server serving on #{port}, writing messages to " <<
+          "#{message_dir.inspect}"
       log "PID=#{$$} Thread=#{Thread.current.inspect}"
     end
 

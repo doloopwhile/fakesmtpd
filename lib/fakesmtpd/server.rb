@@ -182,7 +182,7 @@ module FakeSMTPd
   end
 
   class Server < GServer
-    VERSION = '0.3.0'
+    VERSION = '0.3.1'
     USAGE = <<-EOU.gsub(/^ {6}/, '')
       Usage: #{File.basename($0)} <smtp-port> <message-dir> [options]
 

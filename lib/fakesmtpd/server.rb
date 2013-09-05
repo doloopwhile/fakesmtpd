@@ -62,6 +62,7 @@ module FakeSMTPd
     end
 
     def serve(io)
+      io.set_encoding('UTF-8')
       request_line = io.gets
       path = request_line.split[1]
       handle_client(request_line, path, io)
@@ -127,7 +128,9 @@ module FakeSMTPd
         client.puts 'HTTP/1.1 200 OK'
         client.puts 'Content-type: application/json;charset=utf-8'
         client.puts
-        message = JSON.parse(File.read(message_file))
+        message = File.open(message_file, 'r:UTF-8') do |f|
+          JSON.parse(f.read)
+        end
         client.puts JSON.pretty_generate(
           message.merge(
             _links: {
@@ -203,7 +206,7 @@ module FakeSMTPd
       def main(argv = [])
         options = {
           pidfile: nil,
-          logfile: $stderr,
+          logfile: $stderr.set_encoding('UTF-8'),
         }
 
         OptionParser.new do |opts|
@@ -219,7 +222,7 @@ module FakeSMTPd
           opts.on('-l LOGFILE', '--logfile LOGFILE',
                   'Optional file where all log messages will be written ' <<
                   '(default $stderr)') do |logfile|
-            options[:logfile] = File.open(logfile, 'a')
+            options[:logfile] = File.open(logfile, 'a:UTF-8')
           end
         end.parse!(argv)
 
@@ -287,6 +290,8 @@ module FakeSMTPd
     end
 
     def serve(client)
+      client.set_encoding('UTF-8')
+
       class << client
         attr_reader :client_id
 
@@ -364,7 +369,7 @@ module FakeSMTPd
 
     def store(message_id, from, recipients, body)
       outfile = File.join(message_dir, "fakesmtpd-client-#{message_id}.json")
-      File.open(outfile, 'w') do |f|
+      File.open(outfile, 'w:UTF-8') do |f|
         f.write JSON.pretty_generate(
           message_id: message_id,
           from: from,

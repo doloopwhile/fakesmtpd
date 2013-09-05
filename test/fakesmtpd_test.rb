@@ -1,3 +1,5 @@
+require 'minitest/spec'
+
 require 'json'
 require 'net/http'
 require 'net/smtp'
